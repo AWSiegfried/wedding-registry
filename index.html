@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -642,7 +641,14 @@
         <option value="200-300">$200 – $300</option>
         <option value="300-999">$300+</option>
       </select>
-      <button class="fav-toggle" id="favToggle" onclick="toggleFavFilter()">
+      <select class="filter-select" id="rankFilter" onchange="applyFilters()" style="display:none;">
+        <option value="">All Priorities</option>
+        <option value="1">⭐ Most Wanted</option>
+        <option value="2">High Priority</option>
+        <option value="3">Medium Priority</option>
+        <option value="4">Nice to Have</option>
+        <option value="5">Bonus</option>
+      </select>
         <span class="toggle-heart">🤍</span> Favorites
       </button>
       <span class="items-count" id="itemsCount"></span>
@@ -659,6 +665,10 @@
     <div class="modal-item-name" id="modalItemName"></div>
     <p>Enter your name so the couple knows who's purchasing this item. Going in with others? Enter everyone's names.</p>
     <input type="text" id="claimName" placeholder="Your name(s)" autocomplete="off">
+    <div id="qtyWrapper" style="display:none; margin-bottom:12px;">
+      <label style="font-size:13px; color:var(--text-light); display:block; margin-bottom:6px;">How many are you purchasing?</label>
+      <select id="claimQty" style="width:100%; padding:11px 14px; border:1.5px solid var(--cream-dark); border-radius:var(--radius-sm); font-family:'Jost',sans-serif; font-size:14px; color:var(--text); background:var(--white); outline:none; appearance:none; background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22%3E%3Cpath d=%22M0 0l5 6 5-6z%22 fill=%22%236b6b6b%22/%3E%3C/svg%3E'); background-repeat:no-repeat; background-position:right 12px center;"></select>
+    </div>
     <div class="modal-error" id="modalError">Please enter your name before confirming.</div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -703,16 +713,15 @@ async function sbFetch(path, options = {}) {
 }
 
 async function loadItems() {
-  const data = await sbFetch('registry_items?select=*&order=price.asc');
+  const data = await sbFetch('registry_items?select=*&order=rank.asc,price.asc');
   allItems = data || [];
 }
 
 async function loadClaimed() {
-  // get all claimed rows so we can count per item
-  const data = await sbFetch('claimed_items?select=id');
+  const data = await sbFetch('claimed_items?select=id,quantity');
   claimCounts = {};
   (data || []).forEach(r => {
-    claimCounts[r.id] = (claimCounts[r.id] || 0) + 1;
+    claimCounts[r.id] = (claimCounts[r.id] || 0) + (r.quantity || 1);
   });
 }
 
@@ -720,11 +729,11 @@ function isFullyClaimed(item) {
   return (claimCounts[item.id] || 0) >= item.qty;
 }
 
-async function claimItem(id, name) {
+async function claimItem(id, name, qty = 1) {
   const item = allItems.find(i => i.id === id);
   await sbFetch('claimed_items', {
     method: 'POST',
-    body: JSON.stringify({ id, item_name: item?.name || '', claimed_by: name })
+    body: JSON.stringify({ id, item_name: item?.name || '', claimed_by: name, quantity: qty })
   });
 }
 
@@ -773,6 +782,21 @@ function openClaimModal(id) {
   const btn = document.getElementById('btnConfirm');
   btn.disabled = false;
   btn.textContent = 'Confirm Claim';
+  const remaining = remainingQty(item);
+  const qtyWrapper = document.getElementById('qtyWrapper');
+  const qtySelect = document.getElementById('claimQty');
+  if (item.qty > 1 && remaining > 1) {
+    qtyWrapper.style.display = 'block';
+    qtySelect.innerHTML = '';
+    for (let i = 1; i <= remaining; i++) {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = i === remaining ? i + ' (all remaining)' : i;
+      qtySelect.appendChild(opt);
+    }
+  } else {
+    qtyWrapper.style.display = 'none';
+  }
   document.getElementById('claimModal').classList.add('active');
   setTimeout(() => document.getElementById('claimName').focus(), 100);
 }
@@ -795,12 +819,16 @@ async function confirmClaim() {
     document.getElementById('claimName').focus();
     return;
   }
+  const qtyWrapper = document.getElementById('qtyWrapper');
+  const qty = qtyWrapper.style.display !== 'none'
+    ? parseInt(document.getElementById('claimQty').value)
+    : 1;
   const btn = document.getElementById('btnConfirm');
   btn.disabled = true;
   btn.textContent = 'Claiming...';
   try {
-    await claimItem(currentClaimId, name);
-    claimCounts[currentClaimId] = (claimCounts[currentClaimId] || 0) + 1;
+    await claimItem(currentClaimId, name, qty);
+    claimCounts[currentClaimId] = (claimCounts[currentClaimId] || 0) + qty;
     closeModal();
     applyFilters();
     showToast('Claimed! Thank you for your generosity.');
@@ -816,11 +844,13 @@ function applyFilters() {
   const cat = document.getElementById('catFilter').value;
   const price = document.getElementById('priceFilter').value;
   const search = document.getElementById('searchInput').value.toLowerCase().trim();
+  const rank = document.getElementById('rankFilter').value;
 
   const filtered = allItems.filter(item => {
     if (isFullyClaimed(item)) return false;
     if (favFilterActive && !favorites.has(item.id)) return false;
     if (cat && item.category !== cat) return false;
+    if (rank && item.rank !== parseInt(rank)) return false;
     if (price) {
       const [min, max] = price.split('-').map(Number);
       if (item.price < min || item.price > max) return false;
@@ -922,6 +952,3 @@ init();
 </script>
 </body>
 </html>
-
-
-
