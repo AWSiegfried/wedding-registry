@@ -238,9 +238,10 @@
   .fav-toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     cursor: pointer;
-    padding: 9px 14px;
+    padding: 0 14px;
+    height: 39px;
     border: 1px solid var(--cream-dark);
     border-radius: var(--radius-sm);
     background: var(--white);
@@ -249,6 +250,7 @@
     color: var(--text-light);
     transition: all 0.2s;
     user-select: none;
+    line-height: 1;
   }
   .fav-toggle:hover { border-color: var(--amber); color: var(--text); }
   .fav-toggle.active {
@@ -256,7 +258,7 @@
     border-color: var(--amber);
     color: var(--text);
   }
-  .fav-toggle .toggle-heart { font-size: 13px; }
+  .fav-toggle .toggle-heart { font-size: 11px; line-height: 1; }
 
   .items-count { font-size: 13px; color: var(--text-light); }
 
@@ -653,6 +655,11 @@
         <option value="4">Nice to Have</option>
         <option value="5">Bonus</option>
       </select>
+      <select class="filter-select" id="sortFilter" onchange="applyFilters()">
+        <option value="rank">Sort: Our Picks</option>
+        <option value="price_asc">Price: Low to High</option>
+        <option value="price_desc">Price: High to Low</option>
+      </select>
       <button class="fav-toggle" id="favToggle" onclick="toggleFavFilter()">
         <span class="toggle-heart">🤍</span> Favorites
       </button>
@@ -670,6 +677,7 @@
     <div class="modal-item-name" id="modalItemName"></div>
     <p>Enter your name so the couple knows who's purchasing this item. Going in with others? Enter everyone's names.</p>
     <input type="text" id="claimName" placeholder="Your name(s)" autocomplete="off">
+    <input type="text" id="claimNote" placeholder="Leave us a note (optional)" autocomplete="off" style="margin-top:0;">
     <div id="qtyWrapper" style="display:none; margin-bottom:12px;">
       <label style="font-size:13px; color:var(--text-light); display:block; margin-bottom:6px;">How many are you purchasing?</label>
       <select id="claimQty" style="width:100%; padding:11px 14px; border:1.5px solid var(--cream-dark); border-radius:var(--radius-sm); font-family:'Jost',sans-serif; font-size:14px; color:var(--text); background:var(--white); outline:none; appearance:none; background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22%3E%3Cpath d=%22M0 0l5 6 5-6z%22 fill=%22%236b6b6b%22/%3E%3C/svg%3E'); background-repeat:no-repeat; background-position:right 12px center;"></select>
@@ -734,11 +742,11 @@ function isFullyClaimed(item) {
   return (claimCounts[item.id] || 0) >= item.qty;
 }
 
-async function claimItem(id, name, qty = 1) {
+async function claimItem(id, name, qty = 1, note = '') {
   const item = allItems.find(i => i.id === id);
   await sbFetch('claimed_items', {
     method: 'POST',
-    body: JSON.stringify({ id, item_name: item?.name || '', claimed_by: name, quantity: qty })
+    body: JSON.stringify({ id, item_name: item?.name || '', claimed_by: name, quantity: qty, note: note || null })
   });
 }
 
@@ -783,6 +791,7 @@ function openClaimModal(id) {
   const item = allItems.find(i => i.id === id);
   document.getElementById('modalItemName').textContent = item?.name || '';
   document.getElementById('claimName').value = '';
+  document.getElementById('claimNote').value = '';
   document.getElementById('modalError').style.display = 'none';
   const btn = document.getElementById('btnConfirm');
   btn.disabled = false;
@@ -828,11 +837,12 @@ async function confirmClaim() {
   const qty = qtyWrapper.style.display !== 'none'
     ? parseInt(document.getElementById('claimQty').value)
     : 1;
+  const note = document.getElementById('claimNote').value.trim();
   const btn = document.getElementById('btnConfirm');
   btn.disabled = true;
   btn.textContent = 'Claiming...';
   try {
-    await claimItem(currentClaimId, name, qty);
+    await claimItem(currentClaimId, name, qty, note);
     claimCounts[currentClaimId] = (claimCounts[currentClaimId] || 0) + qty;
     closeModal();
     applyFilters();
@@ -850,6 +860,7 @@ function applyFilters() {
   const price = document.getElementById('priceFilter').value;
   const search = document.getElementById('searchInput').value.toLowerCase().trim();
   const rank = document.getElementById('rankFilter').value;
+  const sort = document.getElementById('sortFilter').value;
 
   const filtered = allItems.filter(item => {
     if (isFullyClaimed(item)) return false;
@@ -865,6 +876,12 @@ function applyFilters() {
       if (!haystack.includes(search)) return false;
     }
     return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (sort === 'price_asc') return a.price - b.price;
+    if (sort === 'price_desc') return b.price - a.price;
+    return (a.rank || 99) - (b.rank || 99) || a.price - b.price;
   });
 
   document.getElementById('itemsCount').textContent =
@@ -916,17 +933,29 @@ function renderGrid(filtered) {
   setTimeout(setupInViewObserver, 50);
 }
 
+let inViewDebounce = null;
+const cardVisibility = new Map();
+
 function setupInViewObserver() {
   if (!('IntersectionObserver' in window)) return;
   if (observer) observer.disconnect();
   if (window.innerWidth > 600) return;
 
+  cardVisibility.clear();
+
   observer = new IntersectionObserver((entries) => {
-    let best = null, bestRatio = 0;
-    entries.forEach(e => { if (e.intersectionRatio > bestRatio) { bestRatio = e.intersectionRatio; best = e; } });
-    document.querySelectorAll('.card.in-view').forEach(c => c.classList.remove('in-view'));
-    if (best && best.intersectionRatio > 0.55) best.target.classList.add('in-view');
-  }, { threshold: [0, 0.25, 0.5, 0.55, 0.75, 1.0], rootMargin: '-10% 0px -10% 0px' });
+    entries.forEach(e => cardVisibility.set(e.target, e.intersectionRatio));
+
+    clearTimeout(inViewDebounce);
+    inViewDebounce = setTimeout(() => {
+      let bestCard = null, bestRatio = 0;
+      cardVisibility.forEach((ratio, card) => {
+        if (ratio > bestRatio) { bestRatio = ratio; bestCard = card; }
+      });
+      document.querySelectorAll('.card.in-view').forEach(c => c.classList.remove('in-view'));
+      if (bestCard && bestRatio > 0.6) bestCard.classList.add('in-view');
+    }, 120);
+  }, { threshold: [0, 0.3, 0.6, 0.9, 1.0], rootMargin: '-5% 0px -5% 0px' });
 
   document.querySelectorAll('.card').forEach(card => observer.observe(card));
 }
