@@ -734,12 +734,12 @@ async function loadClaimed() {
   const data = await sbFetch('claimed_items?select=id,quantity');
   claimCounts = {};
   (data || []).forEach(r => {
-    claimCounts[r.id] = (claimCounts[r.id] || 0) + (r.quantity || 1);
+    const id = parseInt(r.id);
+    claimCounts[id] = (claimCounts[id] || 0) + (r.quantity || 1);
   });
 }
-
 function isFullyClaimed(item) {
-  return (claimCounts[item.id] || 0) >= item.qty;
+  return (claimCounts[parseInt(item.id)] || 0) >= parseInt(item.qty);
 }
 
 async function claimItem(id, name, qty = 1, note = '') {
@@ -843,7 +843,7 @@ async function confirmClaim() {
   btn.textContent = 'Claiming...';
   try {
     await claimItem(currentClaimId, name, qty, note);
-    claimCounts[currentClaimId] = (claimCounts[currentClaimId] || 0) + qty;
+    claimCounts[parseInt(currentClaimId)] = (claimCounts[parseInt(currentClaimId)] || 0) + qty;
     closeModal();
     applyFilters();
     showToast('Claimed! Thank you for your generosity.');
@@ -890,7 +890,7 @@ function applyFilters() {
 }
 
 function remainingQty(item) {
-  return item.qty - (claimCounts[item.id] || 0);
+  return parseInt(item.qty) - (claimCounts[parseInt(item.id)] || 0);
 }
 
 function renderGrid(filtered) {
